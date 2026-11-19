@@ -1,43 +1,109 @@
-# PhishGuard-AI
-An AI-powered phishing detection system that uses Machine Learning and optional LLM integration to identify malicious URLs and suspicious emails. Built with Python, Flask, Scikit-learn, and NLP, featuring real-time scanning, threat analysis, risk classification, and scan history.
+# PhishGuard AI — AI-Integrated Phishing Detection System
 
+A hybrid phishing detection system that combines **Machine Learning** (fast, explainable scoring) with an optional **Large Language Model** (contextual second opinion and plain-English explanation). It scans both **URLs** and **email text**, through a web dashboard, a REST API or the command line.
 
-# PhishGuard AI 🛡️
+## Architecture
 
-### AI-Powered Phishing Detection and Analysis System
+```
+            ┌──────────────┐
+ URL ──────►│ URL features │──► Random Forest ──────┐
+            │ (24 lexical) │                        │
+            └──────────────┘                        ▼
+                                             ┌─────────────┐     ┌───────────────┐
+ Email ───► clean text ─► TF-IDF ─► LogReg ─►│ ML score    │────►│ Hybrid fusion │──► Verdict
+   │                                         │ + red flags │     │ 0.6·ML+0.4·LLM│   phishing /
+   └──► links extracted ─► URL model ───────►└─────────────┘     └───────▲───────┘   suspicious /
+                                                   │                     │           legitimate
+                                                   └──► LLM (optional) ──┘
+                                                        JSON verdict + reasons + advice
+```
 
-PhishGuard AI is a cybersecurity project designed to identify phishing attacks through intelligent URL and email analysis. It combines Machine Learning algorithms, rule-based detection, and optional Large Language Model (LLM) integration to analyze suspicious links and email messages.
+| Layer | Technique | Role |
+|---|---|---|
+| URL model | Random Forest on 24 lexical features (IP host, `@`, TLD, brand impersonation, entropy, shorteners, punycode…) | Detects malicious links |
+| Email model | TF-IDF (1–2 grams) + Logistic Regression | Detects phishing language |
+| Rule engine | Urgency, credential requests, money bait, generic greetings | Human-readable red flags |
+| AI layer | Claude or OpenAI LLM via API, structured JSON output | Second opinion and explanation |
+| Fusion | Weighted score; thresholds 0.7 / 0.4 | Final verdict |
+| Logging | SQLite scan history | Audit trail |
 
-The system provides a user-friendly web dashboard where users can scan URLs and email content, identify potential phishing threats, view detection scores, and understand security risks.
+## Project structure
 
-### Key Features
+```
+phishing-detector/
+├── app.py                  Flask web app + REST API
+├── requirements.txt
+├── data/
+│   ├── generate_dataset.py Synthetic starter dataset
+│   ├── urls.csv            url,label
+│   └── emails.csv          text,label
+├── src/
+│   ├── features.py         URL + email feature extraction, red flags
+│   ├── train.py            Trains both models, writes metrics.json
+│   ├── llm_analyzer.py     Optional LLM integration (standard library only)
+│   └── detector.py         Hybrid detector + CLI
+├── models/                 Trained .joblib models + metrics.json
+├── templates/index.html    Dashboard UI
+└── tests/test_detector.py  Unit tests (pytest)
+```
 
-- **URL Phishing Detection:** Identifies potentially malicious and suspicious URLs.
-- **Email Phishing Detection:** Analyzes email content to detect phishing attempts.
-- **Machine Learning:** Uses Random Forest and Logistic Regression algorithms.
-- **AI Integration:** Optional OpenAI or Anthropic LLM integration for contextual analysis.
-- **Risk Classification:** Classifies results as Phishing, Suspicious, or Legitimate.
-- **Red Flag Detection:** Identifies suspicious keywords, urgency, and credential requests.
-- **Web Dashboard:** Interactive interface built using Flask and HTML.
-- **REST API:** Provides endpoints for URL and email scanning.
-- **Scan History:** Stores previous scan results using SQLite.
+## Setup and run
 
-### Technology Stack
+```bash
+pip install -r requirements.txt
+python data/generate_dataset.py     # creates data/urls.csv and data/emails.csv
+python src/train.py                 # trains models -> models/
+python app.py                       # open http://127.0.0.1:5000
+```
 
-- **Programming Language:** Python
-- **Backend:** Flask
-- **Frontend:** HTML, CSS, JavaScript
-- **Machine Learning:** Scikit-learn
-- **NLP:** TF-IDF
-- **Algorithms:** Random Forest, Logistic Regression
-- **Database:** SQLite
-- **AI Integration:** OpenAI / Anthropic API (optional)
-- **Model Storage:** Joblib
+Turn on the AI layer (optional) by setting one key before starting the app:
 
-### Project Objective
+```bash
+# Linux / macOS
+export ANTHROPIC_API_KEY=your_key        # or: export OPENAI_API_KEY=your_key
+# Windows PowerShell
+$env:ANTHROPIC_API_KEY="your_key"
+```
 
-The main objective of PhishGuard AI is to improve phishing awareness and support early identification of suspicious URLs and email messages through automated cybersecurity analysis.
+Without a key, the system still works fully using ML + rule-based explanations.
 
-### Disclaimer
+### Command line
 
-This project is developed for educational and cybersecurity research purposes. Detection results are predictions and should not be treated as a guarantee that a URL or email is safe.
+```bash
+python src/detector.py --url "http://192.168.1.4/sbi/login/verify" --no-llm
+python src/detector.py --email @suspicious_mail.txt
+```
+
+### REST API
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/scan/url   -H "Content-Type: application/json" -d '{"url":"http://paypal-verify.xyz/login"}'
+curl -X POST http://127.0.0.1:5000/api/scan/email -H "Content-Type: application/json" -d '{"text":"Dear customer, verify your account..."}'
+curl http://127.0.0.1:5000/api/metrics
+curl http://127.0.0.1:5000/api/history
+```
+
+### Tests
+
+```bash
+python -m pytest tests -q
+```
+
+## Using real datasets (important for your report)
+
+The bundled data is **synthetic** so the project runs immediately. Models score ~100% on it because the
+synthetic patterns are easy to separate — **these numbers are not meaningful for a report**. Before
+presenting results, replace the CSVs with real data (keep the same column names) and retrain:
+
+- **URLs:** PhishTank, OpenPhish, Kaggle "Phishing Site URLs" / "Malicious URLs dataset"; legitimate URLs from the Tranco top-sites list
+- **Emails:** Nazario phishing corpus, Kaggle "Phishing Email Detection"; legitimate mail from the Enron corpus
+
+Then run `python src/train.py` again; the dashboard picks up the new `metrics.json` automatically.
+
+## Possible extensions
+
+- WHOIS domain age, DNS and SSL certificate features (needs network lookups)
+- Fine-tuned transformer (DistilBERT) for email text
+- Browser extension that calls `/api/scan/url` before a page loads
+- Screenshot-based visual brand-impersonation detection
+- SHAP values for per-feature explanations
